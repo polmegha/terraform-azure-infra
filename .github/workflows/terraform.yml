@@ -68,30 +68,62 @@ jobs:
           az account show --query name -o tsv
           az account list-locations --query "[?name=='${BACKEND_LOCATION}'].name" -o tsv
 
-      # ✅ Robust backend creation (won't fail if RG already exists)
+      # # ✅ Robust backend creation (won't fail if RG already exists)
+      # - name: Create/Ensure Backend (RG + SA + Container)
+      #   run: |
+      #     set -e
+
+      #     echo "Backend RG: $BACKEND_RG"
+      #     echo "Backend Location: $BACKEND_LOCATION"
+
+      #     # Create RG only if missing
+      #     az group show --name "$BACKEND_RG" >/dev/null 2>&1 || \
+      #       az group create --name "$BACKEND_RG" --location "$BACKEND_LOCATION" -o none
+
+      #     # Create SA only if missing
+      #     if ! az storage account show -g "$BACKEND_RG" -n "$BACKEND_SA" >/dev/null 2>&1; then
+      #       az storage account create \
+      #         -g "$BACKEND_RG" -n "$BACKEND_SA" -l "$BACKEND_LOCATION" \
+      #         --sku Standard_LRS --kind StorageV2 -o none
+      #     fi
+
+      #     # Create container (idempotent)
+      #     az storage container create \
+      #       --name "$BACKEND_CONTAINER" \
+      #       --account-name "$BACKEND_SA" \
+      #       --auth-mode login -o none
+
+      #another  
       - name: Create/Ensure Backend (RG + SA + Container)
         run: |
           set -e
 
-          echo "Backend RG: $BACKEND_RG"
-          echo "Backend Location: $BACKEND_LOCATION"
-
-          # Create RG only if missing
+          echo "Ensuring Backend Resource Group..."
           az group show --name "$BACKEND_RG" >/dev/null 2>&1 || \
-            az group create --name "$BACKEND_RG" --location "$BACKEND_LOCATION" -o none
+          az group create --name "$BACKEND_RG" --location "$BACKEND_LOCATION"
 
-          # Create SA only if missing
+          echo "Ensuring Backend Storage Account..."
           if ! az storage account show -g "$BACKEND_RG" -n "$BACKEND_SA" >/dev/null 2>&1; then
             az storage account create \
-              -g "$BACKEND_RG" -n "$BACKEND_SA" -l "$BACKEND_LOCATION" \
-              --sku Standard_LRS --kind StorageV2 -o none
+              --name "$BACKEND_SA" \
+              --resource-group "$BACKEND_RG" \
+              --location "$BACKEND_LOCATION" \
+              --sku Standard_LRS \
+              --kind StorageV2
           fi
 
-          # Create container (idempotent)
+          echo "Getting Storage Account Key..."
+          SA_KEY=$(az storage account keys list \
+            --resource-group "$BACKEND_RG" \
+            --account-name "$BACKEND_SA" \
+            --query "[0].value" -o tsv)
+
+          echo "Ensuring Container..."
           az storage container create \
             --name "$BACKEND_CONTAINER" \
             --account-name "$BACKEND_SA" \
-            --auth-mode login -o none
+            --account-key "$SA_KEY"
+
 
       # ---- Terraform init using Azure AD backend auth (no CLI user auth) ----
       - name: Terraform Init (Remote Backend)

@@ -1,0 +1,105 @@
+name: Terraform Deploy (Backend + Infra)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write  # required for OIDC
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      TF_VERSION: "1.6.6"
+
+      # Backend (state) resources
+      BACKEND_RG: ${{ secrets.BACKEND_RG }}
+      BACKEND_SA: ${{ secrets.BACKEND_SA }}
+      BACKEND_CONTAINER: ${{ secrets.BACKEND_CONTAINER }}
+      BACKEND_KEY: ${{ secrets.BACKEND_KEY }}
+      BACKEND_LOCATION: ${{ secrets.BACKEND_LOCATION }}
+
+      # Force Terraform to NOT use Azure CLI user auth
+      ARM_USE_OIDC: "true"
+      ARM_USE_AZUREAD: "true"
+      ARM_USE_CLI: "false"
+
+      # Terraform variables come from GitHub Secrets (TF_VAR_* is auto used by Terraform)
+      TF_VAR_resource_group_name: ${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }}
+      TF_VAR_location: ${{ secrets.TF_VAR_LOCATION }}
+      TF_VAR_storage_account_name: ${{ secrets.TF_VAR_STORAGE_ACCOUNT_NAME }}
+      TF_VAR_vnet_name: ${{ secrets.TF_VAR_VNET_NAME }}
+      TF_VAR_vnet_address_space: ${{ secrets.TF_VAR_VNET_ADDRESS_SPACE }}
+      TF_VAR_subnet_name: ${{ secrets.TF_VAR_SUBNET_NAME }}
+      TF_VAR_subnet_address_prefixes: ${{ secrets.TF_VAR_SUBNET_ADDRESS_PREFIXES }}
+      TF_VAR_tags: ${{ secrets.TF_VAR_TAGS }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # ---- Create backend RG/SA/Container (idempotent) ----
+      - name: Create/Ensure Backend (RG + SA + Container)
+        run: |
+          set -e
+
+          echo "Creating backend RG (if not exists): $BACKEND_RG"
+          az group create --name "$BACKEND_RG" --location "$BACKEND_LOCATION" 1>/dev/null
+
+          echo "Creating backend Storage Account (if not exists): $BACKEND_SA"
+          if ! az storage account show -g "$BACKEND_RG" -n "$BACKEND_SA" 1>/dev/null 2>&1; then
+            az storage account create \
+              -g "$BACKEND_RG" -n "$BACKEND_SA" -l "$BACKEND_LOCATION" \
+              --sku Standard_LRS --kind StorageV2 1>/dev/null
+          fi
+
+          echo "Creating backend container (if not exists): $BACKEND_CONTAINER"
+          az storage container create \
+            --name "$BACKEND_CONTAINER" \
+            --account-name "$BACKEND_SA" \
+            --auth-mode login 1>/dev/null
+
+      # ---- Terraform init using Azure AD backend auth (no CLI user auth) ----
+      - name: Terraform Init (Remote Backend)
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          terraform init -reconfigure -input=false \
+            -backend-config="resource_group_name=$BACKEND_RG" \
+            -backend-config="storage_account_name=$BACKEND_SA" \
+            -backend-config="container_name=$BACKEND_CONTAINER" \
+            -backend-config="key=$BACKEND_KEY" \
+            -backend-config="use_azuread_auth=true"
+
+      - name: Terraform Plan (save plan)
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: terraform plan -input=false -out=tfplan
+
+      - name: Terraform Apply
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: terraform apply -input=false -auto-approve tfplan

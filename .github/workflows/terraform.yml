@@ -123,8 +123,8 @@ jobs:
            env | grep '^TF_VAR_' || true
 
 
-           #RG Import example:
-      - name: Auto-import existing resources (safe reruns)
+      #  Auto-import existing resources so pipeline is re-runnable
+      - name: Auto-import existing resources (RG/SA/VNET/SUBNET/KV)
         env:
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
@@ -136,29 +136,54 @@ jobs:
           TF_VAR_resource_group_name: ${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }}
           TF_VAR_storage_account_name: ${{ secrets.TF_VAR_STORAGE_ACCOUNT_NAME }}
           TF_VAR_vnet_name: ${{ secrets.TF_VAR_VNET_NAME }}
+          TF_VAR_subnet_name: ${{ secrets.TF_VAR_SUBNET_NAME }}
+          TF_VAR_key_vault_name: ${{ secrets.TF_VAR_KEY_VAULT_NAME }}
         run: |
           set -e
 
           SUB_ID="${{ secrets.AZURE_SUBSCRIPTION_ID }}"
-          RG_NAME="$TF_VAR_resource_group_name"
-          SA_NAME="$TF_VAR_storage_account_name"
-          VNET_NAME="$TF_VAR_vnet_name"
+          RG="$TF_VAR_resource_group_name"
+          SA="$TF_VAR_storage_account_name"
+          VNET="$TF_VAR_vnet_name"
+          SUBNET="$TF_VAR_subnet_name"
+          KV="$TF_VAR_key_vault_name"
 
-          import_if_needed () {
+          import_if_missing () {
             ADDR="$1"
             ID="$2"
             if terraform state list | grep -q "^${ADDR}$"; then
-              echo "✅ $ADDR already in state"
+              echo " $ADDR already in state"
               return 0
             fi
-            echo "➡️ Importing $ADDR"
+            echo " Importing $ADDR"
             terraform import "$ADDR" "$ID" || true
           }
 
-          # If RG already exists in Azure, import it
-          if az group show --name "$RG_NAME" >/dev/null 2>&1; then
-            import_if_needed "azurerm_resource_group.main_rg" "/subscriptions/$SUB_ID/resourceGroups/$RG_NAME"
+          # RG
+          if az group show -n "$RG" >/dev/null 2>&1; then
+            import_if_missing "azurerm_resource_group.main_rg" "/subscriptions/$SUB_ID/resourceGroups/$RG"
           fi
+
+          # Storage Account (infra SA, not backend SA)
+          if az storage account show -g "$RG" -n "$SA" >/dev/null 2>&1; then
+            import_if_missing "azurerm_storage_account.sa" "/subscriptions/$SUB_ID/resourceGroups/$RG/providers/Microsoft.Storage/storageAccounts/$SA"
+          fi
+
+          # VNET
+          if az network vnet show -g "$RG" -n "$VNET" >/dev/null 2>&1; then
+            import_if_missing "azurerm_virtual_network.vnet" "/subscriptions/$SUB_ID/resourceGroups/$RG/providers/Microsoft.Network/virtualNetworks/$VNET"
+          fi
+
+          # SUBNET
+          if az network vnet subnet show -g "$RG" --vnet-name "$VNET" -n "$SUBNET" >/dev/null 2>&1; then
+            import_if_missing "azurerm_subnet.subnet" "/subscriptions/$SUB_ID/resourceGroups/$RG/providers/Microsoft.Network/virtualNetworks/$VNET/subnets/$SUBNET"
+          fi
+
+          # KEY VAULT
+          if az keyvault show -g "$RG" -n "$KV" >/dev/null 2>&1; then
+            import_if_missing "azurerm_key_vault.kv" "/subscriptions/$SUB_ID/resourceGroups/$RG/providers/Microsoft.KeyVault/vaults/$KV"
+          fi
+
 
 
       - name: Terraform Plan (save plan)

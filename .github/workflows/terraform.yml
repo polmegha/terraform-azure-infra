@@ -111,6 +111,14 @@ jobs:
             -backend-config="key=$BACKEND_KEY" \
             -backend-config="use_azuread_auth=true"
 
+
+      - name: Debug required TF vars (safe)
+        run: |
+         if [ -z "${TF_VAR_resource_group_name}" ]; then echo "TF_VAR_resource_group_name is EMPTY"; else echo "TF_VAR_resource_group_name is SET"; fi
+         if [ -z "${TF_VAR_location}" ]; then echo "TF_VAR_location is EMPTY"; else echo "TF_VAR_location is SET"; fi
+
+    
+
       - name: Terraform Plan (save plan)
         env:
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}

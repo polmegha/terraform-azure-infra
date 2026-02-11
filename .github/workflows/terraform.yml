@@ -122,7 +122,44 @@ jobs:
            echo "TF_VAR_location length: ${#TF_VAR_location}"
            env | grep '^TF_VAR_' || true
 
-    
+
+           #RG Import example:
+      - name: Auto-import existing resources (safe reruns)
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: "true"
+          ARM_USE_AZUREAD: "true"
+          ARM_USE_CLI: "false"
+
+          TF_VAR_resource_group_name: ${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }}
+          TF_VAR_storage_account_name: ${{ secrets.TF_VAR_STORAGE_ACCOUNT_NAME }}
+          TF_VAR_vnet_name: ${{ secrets.TF_VAR_VNET_NAME }}
+        run: |
+          set -e
+
+          SUB_ID="${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+          RG_NAME="$TF_VAR_resource_group_name"
+          SA_NAME="$TF_VAR_storage_account_name"
+          VNET_NAME="$TF_VAR_vnet_name"
+
+          import_if_needed () {
+            ADDR="$1"
+            ID="$2"
+            if terraform state list | grep -q "^${ADDR}$"; then
+              echo "✅ $ADDR already in state"
+              return 0
+            fi
+            echo "➡️ Importing $ADDR"
+            terraform import "$ADDR" "$ID" || true
+          }
+
+          # If RG already exists in Azure, import it
+          if az group show --name "$RG_NAME" >/dev/null 2>&1; then
+            import_if_needed "azurerm_resource_group.main_rg" "/subscriptions/$SUB_ID/resourceGroups/$RG_NAME"
+          fi
+
 
       - name: Terraform Plan (save plan)
         env:

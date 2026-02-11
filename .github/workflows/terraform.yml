@@ -37,6 +37,7 @@ jobs:
       TF_VAR_vnet_address_space: ${{ secrets.TF_VAR_VNET_ADDRESS_SPACE }}
       TF_VAR_subnet_name: ${{ secrets.TF_VAR_SUBNET_NAME }}
       TF_VAR_subnet_address_prefixes: ${{ secrets.TF_VAR_SUBNET_ADDRESS_PREFIXES }}
+      TF_VAR_key_vault_name: ${{ secrets.TF_VAR_KEY_VAULT_NAME }}
     #   TF_VAR_tags: ${{ secrets.TF_VAR_TAGS }}
 
     steps:

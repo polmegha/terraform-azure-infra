@@ -29,7 +29,7 @@ jobs:
       ARM_USE_AZUREAD: "true"
       ARM_USE_CLI: "false"
 
-      # Terraform variables come from GitHub Secrets (TF_VAR_* is auto used by Terraform)
+      # Terraform variables (only keep ones you actually use in TF)
       TF_VAR_resource_group_name: ${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }}
       TF_VAR_location: ${{ secrets.TF_VAR_LOCATION }}
       TF_VAR_storage_account_name: ${{ secrets.TF_VAR_STORAGE_ACCOUNT_NAME }}
@@ -55,26 +55,43 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      # ---- Create backend RG/SA/Container (idempotent) ----
+      # ✅ Safe validation (helps catch wrong BACKEND_LOCATION like "Central India")
+      - name: Validate backend inputs (safe)
+        run: |
+          set -e
+          echo "BACKEND_LOCATION=${BACKEND_LOCATION}"
+          echo "BACKEND_CONTAINER=${BACKEND_CONTAINER}"
+          echo "BACKEND_KEY=${BACKEND_KEY}"
+          echo "BACKEND_RG length=${#BACKEND_RG}"
+          echo "BACKEND_SA length=${#BACKEND_SA}"
+          echo "Checking location exists..."
+          az account show --query name -o tsv
+          az account list-locations --query "[?name=='${BACKEND_LOCATION}'].name" -o tsv
+
+      # ✅ Robust backend creation (won't fail if RG already exists)
       - name: Create/Ensure Backend (RG + SA + Container)
         run: |
           set -e
 
-          echo "Creating backend RG (if not exists): $BACKEND_RG"
-          az group create --name "$BACKEND_RG" --location "$BACKEND_LOCATION" 1>/dev/null
+          echo "Backend RG: $BACKEND_RG"
+          echo "Backend Location: $BACKEND_LOCATION"
 
-          echo "Creating backend Storage Account (if not exists): $BACKEND_SA"
-          if ! az storage account show -g "$BACKEND_RG" -n "$BACKEND_SA" 1>/dev/null 2>&1; then
+          # Create RG only if missing
+          az group show --name "$BACKEND_RG" >/dev/null 2>&1 || \
+            az group create --name "$BACKEND_RG" --location "$BACKEND_LOCATION" -o none
+
+          # Create SA only if missing
+          if ! az storage account show -g "$BACKEND_RG" -n "$BACKEND_SA" >/dev/null 2>&1; then
             az storage account create \
               -g "$BACKEND_RG" -n "$BACKEND_SA" -l "$BACKEND_LOCATION" \
-              --sku Standard_LRS --kind StorageV2 1>/dev/null
+              --sku Standard_LRS --kind StorageV2 -o none
           fi
 
-          echo "Creating backend container (if not exists): $BACKEND_CONTAINER"
+          # Create container (idempotent)
           az storage container create \
             --name "$BACKEND_CONTAINER" \
             --account-name "$BACKEND_SA" \
-            --auth-mode login 1>/dev/null
+            --auth-mode login -o none
 
       # ---- Terraform init using Azure AD backend auth (no CLI user auth) ----
       - name: Terraform Init (Remote Backend)
@@ -82,7 +99,11 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: "true"
+          ARM_USE_AZUREAD: "true"
+          ARM_USE_CLI: "false"
         run: |
+          echo "ARM_USE_CLI=$ARM_USE_CLI"
           terraform init -reconfigure -input=false \
             -backend-config="resource_group_name=$BACKEND_RG" \
             -backend-config="storage_account_name=$BACKEND_SA" \
@@ -95,6 +116,9 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: "true"
+          ARM_USE_AZUREAD: "true"
+          ARM_USE_CLI: "false"
         run: terraform plan -input=false -out=tfplan
 
       - name: Terraform Apply
@@ -102,4 +126,7 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: "true"
+          ARM_USE_AZUREAD: "true"
+          ARM_USE_CLI: "false"
         run: terraform apply -input=false -auto-approve tfplan

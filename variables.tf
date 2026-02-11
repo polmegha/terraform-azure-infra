@@ -10,15 +10,14 @@ variable "subnet_name"             { type = string }
 variable "subnet_address_prefixes" { type = list(string) }
 
 variable "key_vault_name" { type = string }
+
+# KV variable "db_username" 
+variable "db_password" {
+  type      = string
+  sensitive = true
+}
+
  
 
-# variable "tags" { type = map(string) }
 
-# variable "tags" {
-#   type = map(string)
-#   default = {
-#     env   = "dev"
-#     owner = "megha"
-#   }
-# }
 

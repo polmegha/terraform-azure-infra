@@ -56,6 +56,20 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+    # Fetch secret from Key Vault      
+
+      - name: Fetch secret from Key Vault
+        run: |
+          set -e
+          DB_PASSWORD=$(az keyvault secret show \
+            --vault-name "${TF_VAR_key_vault_name}" \
+            --name "db-password" \
+            --query value -o tsv)
+
+          echo "::add-mask::$DB_PASSWORD"
+          echo "DB_PASSWORD=$DB_PASSWORD" >> $GITHUB_ENV
+
+
       # ✅ Safe validation (helps catch wrong BACKEND_LOCATION like "Central India")
       - name: Validate backend inputs (safe)
         run: |
@@ -194,6 +208,8 @@ jobs:
           ARM_USE_OIDC: "true"
           ARM_USE_AZUREAD: "true"
           ARM_USE_CLI: "false"
+
+          TF_VAR_db_password: ${{ env.DB_PASSWORD }}
         run: terraform plan -input=false -out=tfplan
 
       - name: Terraform Apply
@@ -204,4 +220,6 @@ jobs:
           ARM_USE_OIDC: "true"
           ARM_USE_AZUREAD: "true"
           ARM_USE_CLI: "false"
+
+          TF_VAR_db_password: ${{ env.DB_PASSWORD }}
         run: terraform apply -input=false -auto-approve tfplan
